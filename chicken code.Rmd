@@ -1,0 +1,392 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+### Datei einlesen
+```{r}
+ChickWeight <- read.csv("C:/Users/alfa/Downloads/Statistik/ChickWeight.csv")
+View(ChickWeight)
+```
+
+
+
+
+#### Prüfung der Daten
+```{r}
+head(ChickWeight)
+```
+
+
+
+```{r}
+str(ChickWeight,give.attr =F )
+```
+
+### Gibt es Missing Values?
+```{r}
+sum(is.na(ChickWeight))
+sprintf("Anzahl der NAs: %d",sum(is.na(ChickWeight)) )
+```
+```{r}
+#unique(ChickWeight$weight)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(psych)
+library(car)
+library(effsize)
+library(lsr)
+library(sjstats)
+library(ez)
+```
+
+
+**Zeitliche Achse**  
+```{r}
+ChickWeight$Diet <-as.factor(ChickWeight$Diet)
+ggplot(ChickWeight, aes(x=Time , y=weight, group=Diet, color=Diet ))+
+stat_summary(fun = mean, geom="point", size=3)+
+stat_summary(fun = mean, geom="line")+
+stat_summary(fun.data = mean_cl_normal, geom="errorbar",width=.2, size=.25)+
+labs(x="Zeitpunkt", y="Gewicht in kg")+
+theme_classic()
+```
+
+#### Umrechnung in gramm
+```{r}
+Gewicht <- ChickWeight$weight*0.028
+ChickWeight["Gewicht"] <- Gewicht
+View(ChickWeight)
+```
+
+
+
+subset / filtern
+```{r}
+ChickWeight_sub <- subset(ChickWeight , Time == 8 | Time == 16 | Time == 21 )
+View(ChickWeight_sub)
+```
+
+
+```{r}
+ChickWeight_sub$Diet <-as.factor(ChickWeight_sub$Diet)
+library(ggplot2)
+ggplot(ChickWeight_sub, aes(x=Time , y=weight, group=Diet , color= Diet))+
+stat_summary(fun = mean, geom="point", size=3)+
+stat_summary(fun = mean, geom="line")+
+stat_summary(fun.data = mean_cl_normal, geom="errorbar",width=.2, size=.25)+
+labs(x="Zeitpunkt", y="Gewicht in Kg")+
+theme_classic()
+```
+
+```{r}
+interaktion=paste(ChickWeight_sub$Time, ChickWeight_sub$Diet, sep=".") 
+
+ChickWeight_sub["interaktion"] <- interaktion
+```
+
+
+
+### 1) Hypothese
+Haupteffekt A = Time
+H0:Es gibt keinen Unterschied zwischen den verschiedenen Messzeitpunkten und dem Gewicht des Tieres. 
+H1:Es gibt einen Unterschied zwischen den verschiedenen Messzeitpunkten und dem Gewicht des Tieres.
+
+Haupteffekt B = Diet
+H0:Es gibt keinen Unterschied zwischen der Ernährung und dem Gewicht des Tieres.
+H1:Es gibt einen Unterschied zwischen der Ernährung und dem Gewicht des Tieres.
+
+Interaktion AxB = (Time x Diet)
+H1: Es gibt einen Unterschied in der Interaktion zwischen Ernährung und den verschiedenen Messzeitpunkten in punkto Gewicht.
+H0: Es gibt keinen Unterschied in der Interaktion zwischen Ernährung und den verschiedenen Messzeitpunkten in punkto Gewicht.
+
+
+
+
+
+
+### 2) Voraussetzungen der einfaktoriellen Varianzanalyse mit Messwiederholung
+✓ Die abhängige Variable ist min. intervallskaliert -> Gewicht ist ratioskaliert und somti metrisch. 
+
+✓ Die unabhängige Variable (Faktor) ist kategorial (nominal- oder ordinalskaliert) - Ja, es wird der Unterschied zwischen vier Diäten betrachtet.
+
+✓ Die abhängige Variable ist normalverteilt innerhalb jedes Messzeitpunktes (Ab > 25 Probanden pro Messzeitpunkt sind Verletzungen in der Regel unproblematisch) -> Hisogramm und QQplot 
+
+✓ Sphärizität ist gegeben (Mauchly-Test auf Sphärizität) - sieht Mauchly
+
+✓ Es liegen min. drei verbundene Stichproben oder Gruppen vor, aber die verschiedenen Messwertpaare sind voneinander unabhängig s -> ist gegeben
+
+✓ Die durch den Faktor gebildeten Gruppen sind unabhängig s -> ist gegeben
+
+✓ Homogenität der Varianzen: Die Gruppen stammen aus Grundgesamtheiten mit annähernd identischen Varianzen der abhängigen Variablen -> Levene-Test
+
+✓ Balanciertheit des Designs -> ist gegeben
+
+
+
+
+
+### 3) Deskriptive Statistik
+```{r}
+psych::describe(ChickWeight_sub)
+```
+
+
+```{r}
+psych::describeBy(ChickWeight_sub$Gewicht, group = ChickWeight_sub$Time, mat = T)
+```
+
+
+```{r}
+psych::describeBy(ChickWeight_sub$Gewicht, group = ChickWeight_sub$Diet, mat = T)
+```
+
+```{r}
+psych::describeBy(ChickWeight_sub$Gewicht, group = ChickWeight_sub$interaktion, mat = T)
+```
+
+```{r}
+mittel <-tapply(ChickWeight_sub$Gewicht, list(ChickWeight_sub$Diet, ChickWeight_sub$Time), mean, na.rm=TRUE)
+mittel
+```
+```{r}
+sd <-tapply(ChickWeight_sub$Gewicht, list(ChickWeight_sub$Diet, ChickWeight_sub$Time), sd, na.rm=TRUE)
+sd
+```
+
+
+
+```{r}
+mittel <-tapply(ChickWeight_sub$Gewicht, list(ChickWeight_sub$Diet, ChickWeight_sub$Time), mean, na.rm=TRUE)
+mittel
+sd <-tapply(ChickWeight_sub$Gewicht, list(ChickWeight_sub$Diet, ChickWeight_sub$Time), sd, na.rm=TRUE)
+sd
+anzahlprogruppe <- tapply(ChickWeight_sub$Gewicht, list(ChickWeight_sub$Diet, ChickWeight_sub$Time), function(x) sum(!is.na(x)))
+anzahlprogruppe
+```
+
+
+### 4) Voraussetzungsprüfung
+### 4.1) Normalverteilung der Daten mithilfe des Histogrammes
+```{r}
+library(ggpubr)
+library(cowplot)
+
+p1 = ggplot(ChickWeight_sub, aes(x=Gewicht, color=Diet, fill=Diet)) + 
+geom_histogram( binwidth=1.5, aes(fill=Diet), color="#e9ecef", alpha=0.7) + # Erstelle ein Histogramm, Unterteilung, Farbe + Transparenz
+facet_wrap(~Diet)+ # Zwei Graphen
+theme_classic()+ #Farbschema
+labs(x="Gruppierungen", y="Anzahl") + # Beschriftung
+scale_color_manual(values=c("#999999", "#E69F00","#999567", "#E61F01"))+
+scale_fill_manual(values=c("#999999", "#E69F00", "#999567", "#E61F01"))
+p1
+
+p2 = qqPlot(Gewicht ~ Diet, data=ChickWeight_sub, 
+layout=c(2, 2))
+
+p2
+plot_grid(p1, p2, labels = "AUTO")
+
+```
+Die Ernaehrung ist schief
+
+
+**Time**
+```{r}
+ChickWeight_sub$Time <- as.factor(ChickWeight_sub$Time)
+p1 =ggplot(ChickWeight_sub, aes(x=Gewicht, color=Time, fill=Time)) + 
+geom_histogram( binwidth=0.5, aes(fill=Time), color="#e9ecef", alpha=0.7) + # Erstelle ein Histogramm, Unterteilung, Farbe + Transparenz
+facet_wrap(~Time)+ # Zwei Graphen
+theme_classic()+ #Farbschema
+labs(x="Gruppierungen", y="Anzahl") + # Beschriftung
+scale_color_manual(values=c("#999999", "#E69F00","#999567", "#E61F01"))+
+scale_fill_manual(values=c("#999999", "#E69F00", "#999567", "#E61F01"))
+p1
+p2 = qqPlot(Gewicht ~ Time, data=ChickWeight_sub, 
+layout=c(1, 3))
+
+p2
+plot_grid(p1, p2, labels = "AUTO")
+```
+
+**Diet**
+
+```{r}
+library(car)
+library(ggpubr)
+library(cowplot)
+
+p1 = ggplot(ChickWeight_sub, aes(x=Gewicht, color=Diet, fill=Diet)) + 
+geom_histogram( binwidth=1.5, aes(fill=Diet), color="#e9ecef", alpha=0.7) + # Erstelle ein Histogramm, Unterteilung, Farbe + Transparenz
+facet_wrap(~Diet)+ # Zwei Graphen
+theme_classic()+ #Farbschema
+labs(x="Gruppierungen", y="Anzahl") + # Beschriftung
+scale_color_manual(values=c("#999999", "#E69F00","#999567", "#E61F01"))+
+scale_fill_manual(values=c("#999999", "#E69F00", "#999567", "#E61F01"))
+p1
+
+p2 = qqPlot(Gewicht ~ Diet, data=ChickWeight_sub, 
+layout=c(2, 4))
+
+p2
+plot_grid(p1, p2, labels = "AUTO")
+
+```
+
+
+**Interaktion**
+```{r}
+ChickWeight_sub$interaktion <- as.factor(ChickWeight_sub$interaktion)
+p1 =ggplot(ChickWeight_sub, aes(x=Gewicht, color=interaktion, fill=interaktion)) + 
+geom_histogram( binwidth=0.5, aes(fill=interaktion), color="#e9ecef", alpha=0.7) + # Erstelle ein Histogramm, Unterteilung, Farbe + Transparenz
+facet_wrap(~interaktion)+ # Zwei Graphen
+theme_classic()+ #Farbschema
+labs(x="Gruppierungen", y="Anzahl") # Beschriftung
+
+p1
+
+p2 = qqPlot(Gewicht ~ interaktion, data=ChickWeight_sub, 
+layout=c(3, 4))
+
+p2
+plot_grid(p1, p2, labels = "AUTO")
+
+```
+
+#### Boxplot
+```{r}
+ggplot(ChickWeight_sub, aes(Gewicht, fill=factor(Time))) +
+geom_boxplot() +
+theme_minimal()+
+labs(fill = "Time", x="Gewicht")
+```
+
+
+
+
+
+```{r}
+ggplot(ChickWeight_sub, aes(Gewicht, fill=factor(Diet))) +
+geom_boxplot() +
+theme_minimal()+
+labs(fill = "Time", x="Diet")
+```
+
+
+
+
+
+```{r}
+ggplot(ChickWeight_sub, aes(Gewicht, fill=factor(interaktion))) +
+geom_boxplot() +
+theme_minimal()+
+labs(fill = "Time", x="interaktion")
+```
+
+
+```{r}
+library(htmltools)
+
+ggplot(ChickWeight_sub, 
+aes(x=Time, 
+y=Gewicht,
+group = Diet,
+color = Diet,
+aesthetics = "fill" 
+)
+)+
+stat_summary(fun = mean, 
+geom="point", 
+size=3
+)+
+stat_summary(fun = mean, 
+geom="line",
+size= 1.5
+)+
+stat_summary(fun.data = mean_cl_normal, 
+geom="errorbar",
+width=0.2, 
+size=1
+)+
+stat_summary(aes(label=round(..y..,2)), 
+fun ='mean', 
+geom="text", 
+size=4,
+position = position_nudge(x = -0.25, y = 0.75)
+)+
+labs(title = "Die Zeit in Abhängigkeit von der Ernährung",
+x="Ernährung", 
+y="Gesundheitsindex")+
+theme(panel.background = element_rect(size = 0.5, fill = "gray91", colour = "black", linetype='solid'),
+panel.grid.major = element_line(size = 0.5, linetype = 'solid', colour = "darkgray"),
+panel.grid.minor = element_line(size = 0.5, linetype = 'solid', colour = "gray"),
+)
+```
+
+
+
+### 4.2) Mauchly-Test auf Sphärizität
+
+
+
+### 4.3) Prüfung der Varianzhomogenität (Levene-Test)
+```{r}
+leveneTest(ChickWeight_sub$Gewicht ~ ChickWeight_sub$Diet, center = "mean")
+leveneTest(ChickWeight_sub$Gewicht ~ ChickWeight_sub$Time, center = "mean")
+leveneTest(ChickWeight_sub$Gewicht ~ ChickWeight_sub$interaktion, center = "mean")
+```
+
+
+
+### 4.4) Balanciertheit des Designs
+
+```{r}
+anzahlprogruppe <- tapply(ChickWeight_sub$Gewicht, list(ChickWeight_sub$Diet, ChickWeight_sub$Time), function(x) sum(!is.na(x)))
+anzahlprogruppe 
+```
+
+-> Alle Gruppen sind gleich groß.
+
+### 5) Profildiagramm
+
+```{r}
+interaction.plot(ChickWeight_sub$Diet,ChickWeight_sub$Time, ChickWeight_sub$Gewicht,
+xlab = "Ernährung", ylab = "Gewicht", 
+main = "Interaktionsprofil Time und Diet", 
+trace.label = "Messzeitpunkt", 
+type = "b", pch = c(5,17))
+```
+
+```{r}
+interaction.plot(ChickWeight_sub$Time,ChickWeight_sub$Diet, ChickWeight_sub$Gewicht,
+xlab = "Messzeitpunkt", ylab = "Gewicht", 
+main = "Interaktionsprofil Time und Diet", 
+trace.label = "Diet", 
+type = "b", pch = c(5,17))
+```
+
+
+
+### 6) Ergebnisse der einfaktoriellen Varianzanalyse
+### 7) Post-hoc-Tests
+
+```{r}
+pairwise.t.test(ChickWeight_sub$Gewicht, ChickWeight_sub$Diet, data=ChickWeight_sub, p.adjust.method = "bonf", paired = F)
+pairwise.t.test(ChickWeight_sub$Gewicht, ChickWeight_sub$Time, data=ChickWeight_sub, p.adjust.method = "bonf", paired = F)
+pairwise.t.test(ChickWeight_sub$Gewicht, ChickWeight_sub$interaktion, data=ChickWeight_sub, p.adjust.method = "bonf", paired = F)
+```
+
+
+
+### 8) Das partielle Eta-Quadrat
+### 9) Effektstärke
+### 10) Aussage
+
+
+
+
+
+
